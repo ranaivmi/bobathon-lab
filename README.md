@@ -1,6 +1,8 @@
-# 🐍 Serveur Web de Test Flask
+# 🐍 Serveur Web de Test Flask - Version Sécurisée
 
-Serveur web léger pour tests et développement, basé sur Flask + SQLite.
+Serveur web léger pour tests et développement, basé sur Flask + SQLite avec mesures de sécurité renforcées.
+
+> **Version 2.0** - Mise à jour de sécurité majeure (Décembre 2024)
 
 ## 📋 Informations
 
@@ -206,16 +208,144 @@ Consultez le [RUNBOOK.md](RUNBOOK.md) pour :
 - ✅ **SQLite** : Gère 50k+ enregistrements
 - ✅ **Auto-documentation** : Interface web avec exemples
 
-## 🔒 Sécurité
+## 🔒 Sécurité (Version 2.0)
 
-⚠️ **Ce serveur est conçu pour le développement/test uniquement !**
+### ✅ Vulnérabilités Corrigées
 
-Pour la production :
-- Désactiver le mode debug
-- Ajouter l'authentification
-- Utiliser HTTPS
-- Configurer CORS correctement
-- Utiliser une vraie base de données (PostgreSQL, MySQL)
+Cette version inclut des corrections majeures de sécurité :
+
+1. **Protection contre l'injection SQL** ✅
+   - Requêtes paramétrées exclusivement
+   - Validation stricte des entrées
+
+2. **Protection XSS (Cross-Site Scripting)** ✅
+   - Sanitisation de toutes les entrées utilisateur
+   - En-têtes CSP (Content Security Policy)
+
+3. **Validation des entrées** ✅
+   - Validation email avec regex
+   - Validation nom (2-100 caractères)
+   - Vérification d'unicité des emails
+   - Limites de longueur strictes
+
+4. **Rate Limiting** ✅
+   - 10 requêtes/minute pour POST (création)
+   - 20 requêtes/minute pour PUT (modification)
+   - 30 requêtes/minute pour GET
+   - Protection contre les attaques par force brute
+
+5. **En-têtes de sécurité HTTP** ✅
+   - X-Content-Type-Options
+   - X-Frame-Options
+   - Content-Security-Policy
+   - Strict-Transport-Security (en production)
+
+6. **Gestion sécurisée des erreurs** ✅
+   - Messages d'erreur génériques
+   - Pas d'exposition d'informations sensibles
+   - Logging sécurisé
+
+7. **Configuration sécurisée** ✅
+   - DEBUG forcé à False en production
+   - CORS restreint aux origines autorisées
+   - SECRET_KEY obligatoire
+   - Taille maximale des requêtes (16MB)
+
+### 📋 Tests de Sécurité
+
+Un script de test complet est fourni :
+
+```bash
+# Installer les dépendances de test
+pip install requests colorama
+
+# Exécuter les tests de sécurité
+python3 test_security.py
+```
+
+Le script teste :
+- Injection SQL
+- Protection XSS
+- Validation des entrées
+- Rate limiting
+- Unicité des emails
+- En-têtes de sécurité
+- Gestion des erreurs
+
+### 📖 Documentation Sécurité
+
+Consultez [SECURITY.md](SECURITY.md) pour :
+- Liste détaillée des vulnérabilités corrigées
+- Configuration recommandée
+- Bonnes pratiques de sécurité
+- Checklist de déploiement
+- Guide de maintenance
+
+### ⚙️ Configuration Sécurisée
+
+1. **Copier le fichier de configuration** :
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Générer une clé secrète** :
+   ```bash
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+
+3. **Éditer .env** :
+   ```bash
+   SECRET_KEY=votre-cle-secrete-generee
+   DEBUG=False
+   ALLOWED_ORIGINS=https://votredomaine.com
+   ```
+
+### 🚨 Recommandations Production
+
+Pour un déploiement en production :
+
+- ✅ **Obligatoire** :
+  - [ ] Générer et configurer SECRET_KEY unique
+  - [ ] DEBUG=False
+  - [ ] Configurer ALLOWED_ORIGINS avec vos domaines
+  - [ ] Utiliser HTTPS (via Nginx/reverse proxy)
+  - [ ] Activer les logs de sécurité
+  - [ ] Mettre en place des sauvegardes
+
+- ⚠️ **Recommandé** :
+  - [ ] Ajouter l'authentification (JWT, OAuth)
+  - [ ] Utiliser une base de données production (PostgreSQL)
+  - [ ] Configurer un WAF (Web Application Firewall)
+  - [ ] Mettre en place un monitoring
+  - [ ] Scanner régulièrement avec `safety` et `bandit`
+
+### 🔍 Audit de Sécurité
+
+```bash
+# Scanner les vulnérabilités des dépendances
+pip install safety
+safety check
+
+# Analyse statique du code
+pip install bandit
+bandit -r app.py
+```
+
+## 📝 Changelog
+
+### Version 2.0 (16 décembre 2024)
+- ✅ Correction de 8 vulnérabilités de sécurité majeures
+- ✅ Ajout de Flask-Limiter pour rate limiting
+- ✅ Ajout de Flask-Talisman pour en-têtes de sécurité
+- ✅ Validation stricte des entrées utilisateur
+- ✅ Protection contre injection SQL
+- ✅ Protection contre XSS
+- ✅ Gestion sécurisée des erreurs
+- ✅ Script de tests de sécurité
+- ✅ Documentation de sécurité complète
+
+### Version 1.0
+- Version initiale (développement/test uniquement)
 
 ## 📝 Licence
 
@@ -224,4 +354,5 @@ Projet de test - Usage libre
 ## 👤 Auteur
 
 Créé pour : sithidet
-Date : 16 décembre 2025
+Sécurisé par : Bob (Assistant IA)
+Date : 16 décembre 2024

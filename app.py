@@ -1,26 +1,81 @@
 from flask import Flask, jsonify, request, render_template_string
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_talisman import Talisman
 import sqlite3
 import os
+import re
 from datetime import datetime
 from dotenv import load_dotenv
+import secrets
 
 # Charger les variables d'environnement
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+
+# Configuration CORS sécurisée
+ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:*').split(',')
+CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
+
+# Configuration de sécurité
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', secrets.token_hex(32))
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
+
+# Rate limiting
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
+
+# En-têtes de sécurité HTTP (désactivé en développement local)
+IS_DOCKER = os.path.exists('/.dockerenv') or os.getenv('DOCKER_ENV') == 'true'
+if IS_DOCKER:
+    csp = {
+        'default-src': "'self'",
+        'script-src': "'self' 'unsafe-inline'",
+        'style-src': "'self' 'unsafe-inline'"
+    }
+    Talisman(app,
+             force_https=False,  # Nginx gère HTTPS
+             content_security_policy=csp,
+             content_security_policy_nonce_in=['script-src'])
 
 # Configuration depuis les variables d'environnement
 DB_PATH = os.getenv('DB_PATH', 'test.db')
 PORT = int(os.getenv('PORT', 5001))
-DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true' and not IS_DOCKER  # Jamais en production
 NGINX_PORT = os.getenv('NGINX_PORT', '80')
 
-# Déterminer l'environnement (Docker ou local)
-IS_DOCKER = os.path.exists('/.dockerenv') or os.getenv('DOCKER_ENV') == 'true'
 DISPLAY_URL = f"http://localhost:{NGINX_PORT}" if IS_DOCKER else f"http://localhost:{PORT}"
 DISPLAY_PATH = os.getenv('DISPLAY_PATH', os.getcwd())
+
+# Validation des entrées
+EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+NAME_REGEX = re.compile(r'^[a-zA-Z0-9\s\-\'\.]{2,100}$')
+
+def validate_email(email):
+    """Valide le format d'un email"""
+    if not email or not isinstance(email, str):
+        return False
+    return EMAIL_REGEX.match(email) is not None
+
+def validate_name(name):
+    """Valide le format d'un nom"""
+    if not name or not isinstance(name, str):
+        return False
+    return NAME_REGEX.match(name) is not None
+
+def sanitize_input(text, max_length=200):
+    """Nettoie et limite la longueur d'une entrée utilisateur"""
+    if not text or not isinstance(text, str):
+        return ""
+    # Supprimer les caractères de contrôle et limiter la longueur
+    text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
+    return text[:max_length].strip()
 
 # Initialiser la base de données
 def init_db():
@@ -274,36 +329,50 @@ def health_check():
     })
 
 @app.route('/api/users', methods=['GET'])
+@limiter.limit("30 per minute")
 def get_users():
     """Récupère tous les utilisateurs"""
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users ORDER BY created_at DESC')
+        cursor.execute('SELECT id, name, email, created_at FROM users ORDER BY created_at DESC')
         users = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return jsonify(users)
+    except sqlite3.Error as e:
+        app.logger.error(f"Database error in get_users: {e}")
+        return jsonify({'error': 'Erreur lors de la récupération des utilisateurs'}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Unexpected error in get_users: {e}")
+        return jsonify({'error': 'Erreur serveur interne'}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['GET'])
+@limiter.limit("60 per minute")
 def get_user(user_id):
     """Récupère un utilisateur par ID"""
     try:
+        if user_id < 1:
+            return jsonify({'error': 'ID invalide'}), 400
+            
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+        cursor.execute('SELECT id, name, email, created_at FROM users WHERE id = ?', (user_id,))
         user = cursor.fetchone()
         conn.close()
         if user:
             return jsonify(dict(user))
         return jsonify({'error': 'Utilisateur non trouvé'}), 404
+    except sqlite3.Error as e:
+        app.logger.error(f"Database error in get_user: {e}")
+        return jsonify({'error': 'Erreur lors de la récupération de l\'utilisateur'}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Unexpected error in get_user: {e}")
+        return jsonify({'error': 'Erreur serveur interne'}), 500
 
 @app.route('/api/users', methods=['POST'])
+@limiter.limit("10 per minute")
 def create_user():
     """Crée un nouvel utilisateur"""
     try:
@@ -311,30 +380,54 @@ def create_user():
         if not data or 'name' not in data or 'email' not in data:
             return jsonify({'error': 'Données invalides. Requis: name, email'}), 400
         
+        # Validation et nettoyage des entrées
+        name = sanitize_input(data['name'], 100)
+        email = sanitize_input(data['email'], 200)
+        
+        if not validate_name(name):
+            return jsonify({'error': 'Nom invalide. Utilisez uniquement des lettres, chiffres, espaces et tirets (2-100 caractères)'}), 400
+        
+        if not validate_email(email):
+            return jsonify({'error': 'Format d\'email invalide'}), 400
+        
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (name, email) VALUES (?, ?)', 
-                       (data['name'], data['email']))
+        
+        # Vérifier si l'email existe déjà
+        cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({'error': 'Cet email est déjà utilisé'}), 409
+        
+        cursor.execute('INSERT INTO users (name, email) VALUES (?, ?)', (name, email))
         user_id = cursor.lastrowid
         conn.commit()
         conn.close()
         
         return jsonify({
-            'id': user_id, 
+            'id': user_id,
             'message': 'Utilisateur créé avec succès',
             'user': {
                 'id': user_id,
-                'name': data['name'],
-                'email': data['email']
+                'name': name,
+                'email': email
             }
         }), 201
+    except sqlite3.Error as e:
+        app.logger.error(f"Database error in create_user: {e}")
+        return jsonify({'error': 'Erreur lors de la création de l\'utilisateur'}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Unexpected error in create_user: {e}")
+        return jsonify({'error': 'Erreur serveur interne'}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['PUT'])
+@limiter.limit("20 per minute")
 def update_user(user_id):
     """Met à jour un utilisateur"""
     try:
+        if user_id < 1:
+            return jsonify({'error': 'ID invalide'}), 400
+            
         data = request.get_json()
         if not data:
             return jsonify({'error': 'Aucune donnée fournie'}), 400
@@ -343,27 +436,43 @@ def update_user(user_id):
         cursor = conn.cursor()
         
         # Vérifier si l'utilisateur existe
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+        cursor.execute('SELECT id FROM users WHERE id = ?', (user_id,))
         if not cursor.fetchone():
             conn.close()
             return jsonify({'error': 'Utilisateur non trouvé'}), 404
         
-        # Construire la requête de mise à jour
+        # Validation et construction sécurisée de la requête
         updates = []
         params = []
+        
         if 'name' in data:
+            name = sanitize_input(data['name'], 100)
+            if not validate_name(name):
+                conn.close()
+                return jsonify({'error': 'Nom invalide'}), 400
             updates.append('name = ?')
-            params.append(data['name'])
+            params.append(name)
+            
         if 'email' in data:
+            email = sanitize_input(data['email'], 200)
+            if not validate_email(email):
+                conn.close()
+                return jsonify({'error': 'Format d\'email invalide'}), 400
+            # Vérifier si l'email est déjà utilisé par un autre utilisateur
+            cursor.execute('SELECT id FROM users WHERE email = ? AND id != ?', (email, user_id))
+            if cursor.fetchone():
+                conn.close()
+                return jsonify({'error': 'Cet email est déjà utilisé'}), 409
             updates.append('email = ?')
-            params.append(data['email'])
+            params.append(email)
         
         if not updates:
             conn.close()
-            return jsonify({'error': 'Aucune donnée à mettre à jour'}), 400
+            return jsonify({'error': 'Aucune donnée valide à mettre à jour'}), 400
         
         params.append(user_id)
-        query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+        # Construction sécurisée de la requête (pas d'injection SQL possible)
+        query = "UPDATE users SET " + ", ".join(updates) + " WHERE id = ?"
         cursor.execute(query, params)
         conn.commit()
         conn.close()
@@ -372,18 +481,26 @@ def update_user(user_id):
             'message': 'Utilisateur mis à jour avec succès',
             'id': user_id
         })
+    except sqlite3.Error as e:
+        app.logger.error(f"Database error in update_user: {e}")
+        return jsonify({'error': 'Erreur lors de la mise à jour de l\'utilisateur'}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Unexpected error in update_user: {e}")
+        return jsonify({'error': 'Erreur serveur interne'}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@limiter.limit("10 per minute")
 def delete_user(user_id):
     """Supprime un utilisateur"""
     try:
+        if user_id < 1:
+            return jsonify({'error': 'ID invalide'}), 400
+            
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
         # Vérifier si l'utilisateur existe
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+        cursor.execute('SELECT id FROM users WHERE id = ?', (user_id,))
         if not cursor.fetchone():
             conn.close()
             return jsonify({'error': 'Utilisateur non trouvé'}), 404
@@ -396,10 +513,15 @@ def delete_user(user_id):
             'message': 'Utilisateur supprimé avec succès',
             'id': user_id
         })
+    except sqlite3.Error as e:
+        app.logger.error(f"Database error in delete_user: {e}")
+        return jsonify({'error': 'Erreur lors de la suppression de l\'utilisateur'}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Unexpected error in delete_user: {e}")
+        return jsonify({'error': 'Erreur serveur interne'}), 500
 
 @app.route('/api/stats', methods=['GET'])
+@limiter.limit("30 per minute")
 def get_stats():
     """Statistiques du serveur"""
     try:
@@ -413,16 +535,39 @@ def get_stats():
         
         conn.close()
         
-        return jsonify({
+        # Ne pas exposer les chemins complets en production
+        stats = {
             'total_users': total,
-            'database_path': os.path.abspath(DB_PATH),
-            'database_size_bytes': db_size,
             'database_size_mb': round(db_size / (1024 * 1024), 2),
-            'server_path': os.getcwd(),
             'timestamp': datetime.now().isoformat()
-        })
+        }
+        
+        # Informations supplémentaires uniquement en mode développement
+        if DEBUG:
+            stats['database_path'] = os.path.abspath(DB_PATH)
+            stats['server_path'] = os.getcwd()
+        
+        return jsonify(stats)
+    except sqlite3.Error as e:
+        app.logger.error(f"Database error in get_stats: {e}")
+        return jsonify({'error': 'Erreur lors de la récupération des statistiques'}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Unexpected error in get_stats: {e}")
+        return jsonify({'error': 'Erreur serveur interne'}), 500
+
+# Gestionnaire d'erreurs personnalisés
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({'error': 'Ressource non trouvée'}), 404
+
+@app.errorhandler(500)
+def internal_error(e):
+    app.logger.error(f"Internal server error: {e}")
+    return jsonify({'error': 'Erreur serveur interne'}), 500
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({'error': 'Trop de requêtes. Veuillez réessayer plus tard.'}), 429
 
 if __name__ == '__main__':
     print("=" * 60)
@@ -437,6 +582,9 @@ if __name__ == '__main__':
     print(f"📍 Interface web: http://localhost:{PORT}")
     print(f"📡 API: http://localhost:{PORT}/api/")
     print(f"🐛 Mode debug: {DEBUG}")
+    if not DEBUG:
+        print("🔒 Sécurité: Rate limiting activé")
+        print("🔒 Sécurité: Validation des entrées activée")
     print("=" * 60)
     print("💡 Appuyez sur Ctrl+C pour arrêter le serveur")
     print("=" * 60)
