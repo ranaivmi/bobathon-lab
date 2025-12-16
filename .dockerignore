@@ -1,0 +1,102 @@
+# Environnement virtuel Python
+venv/
+env/
+ENV/
+.venv/
+
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Base de données locale (sera dans le volume Docker)
+*.db
+*.sqlite
+*.sqlite3
+test.db
+
+# Logs
+*.log
+logs/
+monitoring.log
+flask.log
+
+# Sauvegardes
+backups/
+archives/
+*.backup
+*.bak
+
+# IDE et éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation et fichiers de développement
+README.md
+RUNBOOK.md
+*.md
+!README-DOCKER.md
+
+# Scripts de démarrage locaux
+start.sh
+stop.sh
+
+# Fichiers de configuration locaux
+.env
+.env.local
+*.local
+
+# Tests
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Fichiers temporaires
+tmp/
+temp/
+*.tmp
+.cache/
+
+# Docker (éviter la récursion)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Autres
+*.pem
+*.key
+*.crt
+.DS_Store
+Thumbs.db

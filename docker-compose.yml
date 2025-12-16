@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Service Flask Application
+  web-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flask-web-server
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - DEBUG=${DEBUG:-False}
+      - PORT=5001
+      - DB_PATH=/app/data/test.db
+      - NGINX_PORT=${NGINX_PORT:-8080}
+      - DOCKER_ENV=true
+      - DISPLAY_PATH=/app
+    volumes:
+      # Volume persistant pour la base de données
+      - db-data:/app/data
+      # Pour le développement : monter le code source (décommenter si besoin)
+      # - ./app.py:/app/app.py:ro
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "com.flask.description=Flask Web Server API"
+      - "com.flask.version=1.0"
+
+  # Service Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: flask-nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      web-server:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "com.flask.description=Nginx Reverse Proxy"
+      - "com.flask.version=1.0"
+
+# Volumes persistants
+volumes:
+  db-data:
+    driver: local
+    labels:
+      - "com.flask.description=SQLite Database Storage"
+  nginx-logs:
+    driver: local
+    labels:
+      - "com.flask.description=Nginx Access and Error Logs"
+
+# Réseau isolé pour les services
+networks:
+  app-network:
+    driver: bridge
+    labels:
+      - "com.flask.description=Internal network for Flask services"
+
+# Made with Bob

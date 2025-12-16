@@ -3,12 +3,24 @@ from flask_cors import CORS
 import sqlite3
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-# Chemin de la base de données
-DB_PATH = 'test.db'
+# Configuration depuis les variables d'environnement
+DB_PATH = os.getenv('DB_PATH', 'test.db')
+PORT = int(os.getenv('PORT', 5001))
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+NGINX_PORT = os.getenv('NGINX_PORT', '80')
+
+# Déterminer l'environnement (Docker ou local)
+IS_DOCKER = os.path.exists('/.dockerenv') or os.getenv('DOCKER_ENV') == 'true'
+DISPLAY_URL = f"http://localhost:{NGINX_PORT}" if IS_DOCKER else f"http://localhost:{PORT}"
+DISPLAY_PATH = os.getenv('DISPLAY_PATH', os.getcwd())
 
 # Initialiser la base de données
 def init_db():
@@ -128,12 +140,6 @@ HOME_HTML = '''
 </head>
 <body>
     <h1>🐍 Serveur de Test Flask</h1>
-    
-    <div class="info-box">
-        <strong>📍 Emplacement:</strong> <code>/Users/sithidet/Desktop/01_En_Cours/Bob/serveur-test</code><br>
-        <strong>🌐 URL:</strong> <code>http://localhost:5001</code><br>
-        <strong>📅 Démarré:</strong> <span id="startTime"></span>
-    </div>
 
     <div class="stats" id="stats">
         <div class="stat-card">
@@ -200,9 +206,6 @@ HOME_HTML = '''
     <pre id="result">Cliquez sur un bouton pour tester l'API...</pre>
     
     <script>
-        // Afficher l'heure de démarrage
-        document.getElementById('startTime').textContent = new Date().toLocaleString('fr-FR');
-        
         // Charger les stats au démarrage
         getStats();
         
@@ -428,13 +431,13 @@ if __name__ == '__main__':
     print("🔧 Initialisation de la base de données...")
     init_db()
     print("✅ Base de données prête!")
-    print("📁 Emplacement: /Users/sithidet/Desktop/01_En_Cours/Bob/serveur-test")
-    print("🗄️  Base de données: test.db")
+    print(f"📁 Base de données: {DB_PATH}")
     print("=" * 60)
     print("🚀 Démarrage du serveur...")
-    print("📍 Interface web: http://localhost:5001")
-    print("📡 API: http://localhost:5001/api/")
+    print(f"📍 Interface web: http://localhost:{PORT}")
+    print(f"📡 API: http://localhost:{PORT}/api/")
+    print(f"🐛 Mode debug: {DEBUG}")
     print("=" * 60)
     print("💡 Appuyez sur Ctrl+C pour arrêter le serveur")
     print("=" * 60)
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=DEBUG, host='0.0.0.0', port=PORT)
